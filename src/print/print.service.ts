@@ -198,7 +198,7 @@ async printCustomerCheckSocket(check: any): Promise<string> {
     });
 
     const unitLabels: Record<string, string> = {
-      piece: "dona",
+      piece: "ta",
       kg: "kg",
       gr: "gr",
       liter: "litr",
@@ -208,7 +208,7 @@ async printCustomerCheckSocket(check: any): Promise<string> {
     doc.fontSize(13).font(boldFont);
 
     Object.values(mergedItems).forEach((item) => {
-      const unit = unitLabels[item.unit] || item.unit || "dona";
+      const unit = unitLabels[item.unit] || item.unit || "ta";
       const qty = item.quantity % 1 === 0 ? item.quantity : item.quantity.toFixed(2);
 
       // Mahsulot nomi
@@ -239,8 +239,11 @@ async printCustomerCheckSocket(check: any): Promise<string> {
 
     doc.moveDown(2);
 
+// console.log("Chek raqami:", JSON.stringify(check, null, 2));
+
+
     // ====================== QR KOD ======================
-    const qrUrl = `https://plow.uz`; // yoki https://superofitsiant.uz/check/${check.orderId}
+    const qrUrl = `http://192.168.1.45:3000/ru/payments/check/${check.id}`;
     const qrBuffer = QRCode.imageSync(qrUrl, { type: 'png', size: 5, margin: 2 });
 
     doc.image(qrBuffer, {
