@@ -5,10 +5,19 @@ import { print } from 'pdf-to-printer';
 import * as fs from 'fs';
 import { join } from 'path';
 import PDFDocument = require('pdfkit');
-import * as QRCode from 'qr-image'; // ← QR-kod uchun
+// import * as QRCode from 'qr-image'; // ← QR-kod uchun
 import * as dotenv from 'dotenv';
 
 dotenv.config();
+
+const CATEGORY_PRINTER_MAP: Record<number, string> = {
+  6: process.env.DRINKS_PRINTER!, // 🥤 Ichimliklar
+  7: process.env.GRILL_PRINTER!,  // 🔥 Lavash
+  9: process.env.GRILL_PRINTER!,  // 🔥 Shashlik
+  10: process.env.SALAD_PRINTER!, // 🥗 Salatlar
+};
+
+const DEFAULT_PRINTER = process.env.CITCHEN_PRINTER!;
 
 @Injectable()
 export class PrintService {
@@ -17,119 +26,181 @@ export class PrintService {
 
   constructor(private readonly http: HttpService) {}
 
-  // === Oshxona uchun eski funksiya (o‘zgarmadi) ===
- async printKitchenOrder(order: any): Promise<string> {
-    const pdfPath = join(process.cwd(), `kitchen-order-${order.id}.pdf`);
   
-    if (!order.items || !Array.isArray(order.items)) {
-      console.error('❌ Order.items topilmadi yoki noto‘g‘ri format:', order);
-      return '⚠️ Buyurtma ichida itemlar yo‘q!';
-    }
-  
-    // 🔹 faqat chop etilmagan yangi itemlar
-    const itemsToPrint = order.items.filter(
-      (item) => !item.isPrinted && item.status !== 'canceled'
-    );
-  
-    // 🔹 canceled bo‘lgan itemlar (isPrinted bo‘lsa ham qaytadan chiqishi kerak)
-    const canceledItems = order.items.filter(
-      (item) => !item.isPrinted && item.status === 'canceled'
-    );
-  
-    if (itemsToPrint.length === 0 && canceledItems.length === 0) {
-      return 'ℹ️ Yangi ham, bekor qilingan ham taom yo‘q.';
-    }
-  
-    await new Promise<void>((resolve, reject) => {
-      const doc = new PDFDocument({
-        size: [240, 600],
-        margins: { top: 10, left: 5, right: 5, bottom: 10 },
-      });
-  
-      const fontPath = join(process.cwd(), 'fonts', 'DejaVuSans.ttf');
-      doc.font(fontPath);
-  
-      const stream = fs.createWriteStream(pdfPath);
-      doc.pipe(stream);
-  
-      // 🔹 Sarlavha
-      doc.fontSize(16).text('CHEK - Oshxona', { align: 'center' });
-      doc.moveDown();
-  
-      // 🔹 Buyurtma haqida
-      doc.fontSize(12).text(`Stol: ${order.table?.table_number} (${order.table?.location})`);
-      doc.text(`Ofitsiant: ${order.user?.name || 'Nomaʼlum'}`);
-      doc.text(`Vaqt: ${new Date(order.createdAt).toLocaleString()}`);
-      doc.moveDown();
-      doc.moveTo(10, doc.y).lineTo(216, doc.y).stroke();
-  
-      // 🔹 birliklar uchun lug‘at
-      const unitLabels: Record<string, string> = {
-        piece: 'ta',
-        kg: 'kg',
-        gr: 'gr',
-        liter: 'litr',
-      };
-  
-      const formatQuantity = (qty: any) => {
-        const num = Number(qty);
-        if (isNaN(num)) return qty;
-        return Number.isInteger(num) ? num.toString() : num.toFixed(2);
-      };
-  
-      // 🔹 Yangi itemlar
-      if (itemsToPrint.length > 0) {
-        doc.moveDown().fontSize(14).text(' Yangi buyurtmalar:', { underline: true });
-  
-        itemsToPrint.forEach((item) => {
-          const unit = unitLabels[item.product.unitType] || item.product.unitType || '';
-          const qty = formatQuantity(item.quantity);
-          doc.fontSize(14).text(`${qty} ${unit} x ${item.product?.name ?? 'Noma’lum'}`);
-        });
-      }
-  
-      // 🔹 Bekor qilingan itemlar
-      if (canceledItems.length > 0) {
-        doc.moveDown().fontSize(14).fillColor('red').text('❌ Bekor qilingan:', { underline: true });
-  
-        canceledItems.forEach((item) => {
-          const unit = unitLabels[item.product.unitType] || item.product.unitType || '';
-          const qty = formatQuantity(item.quantity);
-          doc.fontSize(14).text(`${qty} ${unit} x ${item.product?.name ?? 'Noma’lum'}`);
-        });
-  
-        doc.fillColor('black');
-      }
-  
-      doc.end();
-  
-      stream.on('finish', () => resolve());
-      stream.on('error', (err) => reject(err));
+  async printForSinglePrinter(
+  order: any,
+  items: any[],
+  canceledItems: any[],
+  printerName: string
+) {
+  if (items.length === 0 && canceledItems.length === 0) return;
+
+  const pdfPath = join(
+    process.cwd(),
+    `kitchen-${printerName}-${Date.now()}.pdf`
+  );
+
+  await new Promise<void>((resolve, reject) => {
+    const doc = new PDFDocument({
+      size: [240, 600],
+      margins: { top: 10, left: 5, right: 5, bottom: 10 },
     });
-  
-    // 🔹 printerga chiqarish
-    await print(pdfPath, { printer: `${process.env.CITCHEN_PRINTER}` });
-    fs.unlinkSync(pdfPath);
-  
-    // 🔹 Yangi itemlarni isPrinted = true qilish
-// 🔹 Yangi va bekor qilingan itemlarni isPrinted = true qilish
-const printedItems = [...itemsToPrint, ...canceledItems];
-for (const item of printedItems) {
-  try {
-    await this.http.put(
-      `${this.API_URL}/order-items/${item.id}`,
-      { isPrinted: true },
-      { headers: { Authorization: `Bearer ${this.TOKEN}` } }
-    ).toPromise();
-  } catch (err: any) {
-    console.error(`❌ Item #${item.id} update bo‘lmadi:`, err.message);
-  }
+
+    const fontPath = join(process.cwd(), 'fonts', 'DejaVuSans.ttf');
+    doc.font(fontPath);
+
+    const stream = fs.createWriteStream(pdfPath);
+    doc.pipe(stream);
+
+    // 🔹 HEADER
+    doc.fontSize(16).text('CHEK - OSHXONA', { align: 'center' });
+    doc.moveDown();
+
+    doc.fontSize(12)
+      .text(`Stol: ${order.table?.table_number}`)
+      .text(`Ofitsiant: ${order.user?.name || 'Nomaʼlum'}`)
+      .text(`Vaqt: ${new Date().toLocaleString()}`);
+
+    doc.moveDown();
+    doc.moveTo(10, doc.y).lineTo(216, doc.y).stroke();
+
+    const unitLabels: Record<string, string> = {
+      piece: 'ta',
+      kg: 'kg',
+      gr: 'gr',
+      liter: 'l',
+    };
+
+const formatQty = (q: any) => {
+  const num = Number(q);
+  if (Number.isNaN(num)) return q;
+  return num % 1 === 0 ? num.toString() : num.toFixed(2);
+};
+
+    // 🔹 YANGI ITEMLAR
+    if (items.length > 0) {
+      doc.moveDown().fontSize(14).text('Yangi:', { underline: true });
+
+      items.forEach(item => {
+        const unit =
+          unitLabels[item.product.unitType] ||
+          item.product.unitType ||
+          '';
+        doc.text(
+          `${formatQty(item.quantity)} ${unit} x ${item.product.name}`
+        );
+      });
+    }
+
+    // 🔹 BEKOR QILINGAN
+    if (canceledItems.length > 0) {
+      doc.moveDown()
+        .fontSize(14)
+        .fillColor('red')
+        .text('❌ Bekor qilingan:', { underline: true });
+
+      canceledItems.forEach(item => {
+        const unit =
+          unitLabels[item.product.unitType] ||
+          item.product.unitType ||
+          '';
+        doc.text(
+          `${formatQty(item.quantity)} ${unit} x ${item.product.name}`
+        );
+      });
+
+      doc.fillColor('black');
+    }
+
+    doc.end();
+
+    stream.on('finish', resolve);
+    stream.on('error', reject);
+  });
+
+  await print(pdfPath, { printer: printerName });
+  fs.unlinkSync(pdfPath);
 }
 
-  
-    return '✅ Oshxona uchun buyurtma chiqarildi!';
+  // === Oshxona uchun eski funksiya (o‘zgarmadi) ===
+async printKitchenOrder(order: any): Promise<string> {
+  if (!order.items || !Array.isArray(order.items)) {
+    return '⚠️ Buyurtmada itemlar yo‘q';
   }
-  
+
+  // 🔹 print qilinadigan itemlar
+  const itemsToPrint = order.items.filter(
+    item => !item.isPrinted && item.status !== 'canceled'
+  );
+
+  const canceledItems = order.items.filter(
+    item => !item.isPrinted && item.status === 'canceled'
+  );
+
+  if (itemsToPrint.length === 0 && canceledItems.length === 0) {
+    return 'ℹ️ Chop etiladigan taom yo‘q';
+  }
+
+  // 🔹 printer bo‘yicha guruhlash
+  const printerGroups: Record<
+    string,
+    { items: any[]; canceled: any[] }
+  > = {};
+
+  const pushToGroup = (item: any, isCanceled = false) => {
+    const categoryId = item.product?.categoryId;
+    const printer =
+      CATEGORY_PRINTER_MAP[categoryId] || DEFAULT_PRINTER;
+
+    if (!printerGroups[printer]) {
+      printerGroups[printer] = { items: [], canceled: [] };
+    }
+
+    isCanceled
+      ? printerGroups[printer].canceled.push(item)
+      : printerGroups[printer].items.push(item);
+  };
+
+  itemsToPrint.forEach(item => pushToGroup(item));
+  canceledItems.forEach(item => pushToGroup(item, true));
+
+  // 🔹 har bir printerga alohida chiqarish
+  for (const [printerName, data] of Object.entries(printerGroups)) {
+    await this.printForSinglePrinter(
+      order,
+      data.items,
+      data.canceled,
+      printerName
+    );
+  }
+
+  // 🔹 isPrinted = true qilish
+  const printedItems = [...itemsToPrint, ...canceledItems];
+
+  for (const item of printedItems) {
+    try {
+      await this.http.put(
+        `${this.API_URL}/order-items/${item.id}`,
+        { isPrinted: true },
+        { headers: { Authorization: `Bearer ${this.TOKEN}` } }
+      ).toPromise();
+    } catch (err: any) {
+      console.error(`❌ Item #${item.id} update bo‘lmadi`);
+    }
+  }
+
+  console.log('CATEGORY_PRINTER_MAP:', CATEGORY_PRINTER_MAP);
+console.log('DEFAULT_PRINTER:', DEFAULT_PRINTER);
+
+itemsToPrint.forEach(item => {
+  console.log('Item:', item.product.name, 'categoryId:', item.product.categoryId, 'type:', typeof item.product.categoryId);
+  const printer = CATEGORY_PRINTER_MAP[item.product.categoryId] || DEFAULT_PRINTER;
+  console.log('→ Printer:', printer);
+});
+
+  return '✅ Buyurtma printerlarga chiqarildi';
+}
+
 
 async printCustomerCheckSocket(check: any): Promise<string> {
   const fileSafeName = check.user?.name?.replace(/\s+/g, "_") || `order-${check.orderId}`;
